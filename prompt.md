@@ -1,4 +1,4 @@
-i have an photograph of a bookshelf at ~/Desktop/IMG_4014.jpeg
+i have an photograph of a bookshelf at IMG_4014.jpeg
 
 there's a model at https://universe.roboflow.com/dobs-tnsmf/finetune-mrcnn which can recognize book spines in photographs of book shelves.
 
