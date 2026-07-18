@@ -1,0 +1,32 @@
+[
+  {
+    "title": "Dragons of Winter Night",
+    "author": "Margaret Weis, Tracy Hickman",
+    "confidence": "high",
+    "isbn": null,
+    "published": "1985",
+    "ocr_text": "CHRONTCRES DRAGONS or WINTER NIGHT",
+    "detection_score": 0.025503600016236305,
+    "position": 0
+  },
+  {
+    "title": "(OCR returned no text)",
+    "author": "",
+    "confidence": "low",
+    "isbn": null,
+    "published": null,
+    "ocr_text": "",
+    "detection_score": 0.06745688617229462,
+    "position": 2
+  },
+  {
+    "title": "(OCR returned no text)",
+    "author": "",
+    "confidence": "low",
+    "isbn": null,
+    "published": null,
+    "ocr_text": "",
+    "detection_score": 0.021581344306468964,
+    "position": 3
+  }
+]

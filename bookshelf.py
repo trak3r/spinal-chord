@@ -23,10 +23,13 @@ import certifi
 import numpy as np
 import pytesseract
 import requests
+import ssl
 from PIL import Image, ImageEnhance, ImageFilter, ImageOps
 from ultralytics import YOLO
 
 os.environ["REQUESTS_CA_BUNDLE"] = certifi.where()
+os.environ["SSL_CERT_FILE"] = certifi.where()
+ssl._create_default_https_context = ssl.create_default_context
 
 # ── data ────────────────────────────────────────────────────────────────────
 
@@ -44,30 +47,41 @@ class Book:
 
 # ── detection ───────────────────────────────────────────────────────────────
 
-def detect_books(image_path: str, conf_threshold: float = 0.3) -> list:
-    """Detect books using YOLOv11. Returns list of (bbox, confidence) sorted left-to-right."""
-    model = YOLO("yolo11n.pt")
-    results = model(image_path)
+_MODEL = None
+
+def detect_books(image_path: str, conf_threshold: float = 0.02) -> list:
+    """Detect books using YOLO-World (text-prompted, open-vocabulary).
+    Returns list of (bbox, confidence), auto-sorted by orientation.
+    """
+    global _MODEL
+    if _MODEL is None:
+        _MODEL = YOLO("yolov8m-worldv2.pt")
+        _MODEL.set_classes(["book cover"])
+    results = _MODEL.predict(image_path, conf=conf_threshold)
     books = []
     for box in results[0].boxes:
-        cls = int(box.cls[0])
         conf = float(box.conf[0])
-        if cls == 73 and conf >= conf_threshold:
+        if conf >= conf_threshold:
             x1, y1, x2, y2 = map(int, box.xyxy[0].tolist())
             w, h = x2 - x1, y2 - y1
-            aspect = w / h if h > 0 else 0
-            if aspect < 0.6 and w * h > 10000:
+            if w * h > 10000:
                 books.append(((x1, y1, x2, y2), conf))
-    books.sort(key=lambda b: b[0][0])
+    if books:
+        aspects = [(x2 - x1) / max(y2 - y1, 1) for (x1, y1, x2, y2), _ in books]
+        median = sorted(aspects)[len(aspects) // 2]
+        if median < 0.6:
+            books.sort(key=lambda b: b[0][0])  # left-to-right (spines)
+        else:
+            books.sort(key=lambda b: (b[0][1], b[0][0]))  # top-to-bottom, left-to-right
     return books
 
 
 # ── OCR ─────────────────────────────────────────────────────────────────────
 
-def _ocr_strategies(img: Image.Image) -> list[tuple[str, float]]:
+def _ocr_strategies(img: Image.Image, rotate: bool = True) -> list[tuple[str, float]]:
     """Try multiple OCR approaches and return (text, quality_score) pairs."""
     results = []
-    r = img.rotate(90, expand=True)
+    r = img.rotate(90, expand=True) if rotate else img
     gray = r.convert("L")
     arr = np.array(gray, dtype=np.uint8)
 
@@ -107,11 +121,11 @@ def _score_text(text: str) -> float:
     return upper_ratio * 0.5 + alpha_ratio * 0.3 + length_bonus * 0.2
 
 
-def extract_texts(spine_img: Image.Image) -> list[str]:
+def extract_texts(spine_img: Image.Image, rotate: bool = True) -> list[str]:
     """Return deduplicated OCR texts from all strategies."""
     seen = set()
     texts = []
-    for text, score in _ocr_strategies(spine_img):
+    for text, score in _ocr_strategies(spine_img, rotate=rotate):
         t = re.sub(r"\s+", " ", text).strip()
         if t and t not in seen:
             seen.add(t)
@@ -290,8 +304,8 @@ def main():
     ap = argparse.ArgumentParser(description="Identify books from a bookshelf photo")
     ap.add_argument("image", help="Path to the photo")
     ap.add_argument("-o", "--output", help="Output file (.json or .csv)")
-    ap.add_argument("--conf", type=float, default=0.3,
-                    help="Detection confidence threshold (default 0.3)")
+    ap.add_argument("--conf", type=float, default=0.02,
+                    help="Detection confidence threshold (default 0.02)")
     ap.add_argument("--crops", help="Crop output directory (default: <image stem>_crops)")
     args = ap.parse_args()
 
@@ -311,12 +325,15 @@ def main():
 
     results = []
     for i, (bbox, score) in enumerate(detections, 1):
-        print(f"── Book {i} (shelf pos {i}, detection: {score:.2f}) ──")
+        w, h = bbox[2] - bbox[0], bbox[3] - bbox[1]
+        is_spine = (w / max(h, 1)) < 0.6
+        label = "spine" if is_spine else "face"
+        print(f"── Book {i} ({label}, detection: {score:.2f}) ──")
         spine = Image.open(args.image).crop(bbox)
 
         spine.save(os.path.join(crops_dir, f"book_{i:03d}.jpg"))
 
-        texts = extract_texts(spine)
+        texts = extract_texts(spine, rotate=is_spine)
         if texts[0]:
             print(f"  OCR: {texts[0][:100]}")
         else:
