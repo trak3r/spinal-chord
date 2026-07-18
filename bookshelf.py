@@ -332,19 +332,22 @@ def main():
         results.append(book)
 
     # Output
-    if args.output:
-        data = [asdict(b) for b in results]
-        ext = Path(args.output).suffix.lower() or ".json"
-        path = args.output if Path(args.output).suffix else args.output + ".json"
-        if ext == ".json":
-            with open(path, "w") as f:
-                json.dump(data, f, indent=2)
-        elif ext == ".csv":
-            with open(path, "w", newline="") as f:
-                w = csv.DictWriter(f, fieldnames=list(data[0].keys()))
-                w.writeheader()
-                w.writerows(data)
-        print(f"\nSaved catalog to {path}")
+    data = [asdict(b) for b in results]
+    path = args.output or Path(args.image).with_suffix(".json")
+    ext = Path(path).suffix.lower() or ".json"
+    path = str(path)
+    if not Path(path).suffix:
+        path += ".json"
+        ext = ".json"
+    if ext == ".json":
+        with open(path, "w") as f:
+            json.dump(data, f, indent=2)
+    elif ext == ".csv":
+        with open(path, "w", newline="") as f:
+            w = csv.DictWriter(f, fieldnames=list(data[0].keys()))
+            w.writeheader()
+            w.writerows(data)
+    print(f"\nSaved catalog to {path}")
 
     # Summary
     found = sum(1 for b in results if b.confidence == "high")
