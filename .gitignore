@@ -5,8 +5,8 @@ env/
 *.pyc
 __pycache__/
 .ipynb_checkpoints/
-temp_spine.jpg
 *_crops/
 *.pt
 catalog.json
 catalog.csv
+.huggingface/
