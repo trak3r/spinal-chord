@@ -11,9 +11,10 @@ from pathlib import Path
 
 from PIL import Image
 
+from bookshelf.appearance import analyze_appearance
 from bookshelf.decide import verify_match
 from bookshelf.detect import detect_books, save_crops
-from bookshelf.lookup import search_books
+from bookshelf.lookup import fetch_publisher_size, search_books
 from bookshelf.read import read_book
 
 
@@ -34,6 +35,24 @@ class BookResult:
     choice_id: str
     choice_confidence: float
     confident_noul: float
+    # Photo-measured (for sorting this shelf)
+    spine_width_px: int | None = None
+    spine_height_px: int | None = None
+    spine_width_frac: float | None = None
+    spine_height_frac: float | None = None
+    spine_color_hex: str | None = None
+    spine_color_rgb: list[int] | None = None
+    spine_color_name: str | None = None
+    spine_color_source: str | None = None
+    # Catalog-measured when Open Library has it (publisher-ish; often missing)
+    publisher_height_mm: float | None = None
+    publisher_width_mm: float | None = None
+    publisher_thickness_mm: float | None = None
+    publisher_pages: int | None = None
+    publisher_dimensions_raw: str | None = None
+    publisher_format: str | None = None
+    publisher_edition_key: str | None = None
+    publisher_size_source: str | None = None
 
 
 def identify_image(
@@ -47,11 +66,9 @@ def identify_image(
 ) -> list[BookResult]:
     image = Image.open(image_path).convert("RGB")
     detections = detect_books(image, conf=conf)
-    # Highest-confidence detections first.
     detections = sorted(detections, key=lambda d: d.confidence, reverse=True)
     if max_books is not None:
         detections = detections[: max(0, max_books)]
-    # Re-index after sort/limit so crop filenames stay dense.
     for i, det in enumerate(detections):
         det.index = i
     crop_paths = save_crops(detections, crops_dir)
@@ -59,6 +76,10 @@ def identify_image(
 
     results: list[BookResult] = []
     for det, crop_path in zip(detections, crop_paths):
+        appearance = analyze_appearance(
+            det.crop, det.bbox, det.orientation, image.size
+        )
+
         print(f"[{det.index}] reading crop…", file=sys.stderr)
         reading = read_book(det.crop)
         print(
@@ -76,6 +97,10 @@ def identify_image(
         )
 
         cand = decision.candidate
+        pub = None
+        if cand is not None:
+            pub = fetch_publisher_size(cand)
+
         results.append(
             BookResult(
                 index=det.index,
@@ -93,11 +118,36 @@ def identify_image(
                 choice_id=decision.choice_id,
                 choice_confidence=decision.choice_confidence,
                 confident_noul=decision.confident_noul,
+                spine_width_px=appearance.spine_width_px,
+                spine_height_px=appearance.spine_height_px,
+                spine_width_frac=appearance.spine_width_frac,
+                spine_height_frac=appearance.spine_height_frac,
+                spine_color_hex=appearance.color_hex,
+                spine_color_rgb=list(appearance.color_rgb),
+                spine_color_name=appearance.color_name,
+                spine_color_source=appearance.color_source,
+                publisher_height_mm=pub.height_mm if pub else None,
+                publisher_width_mm=pub.width_mm if pub else None,
+                publisher_thickness_mm=pub.thickness_mm if pub else None,
+                publisher_pages=pub.pages if pub else None,
+                publisher_dimensions_raw=pub.raw_dimensions if pub else None,
+                publisher_format=pub.physical_format if pub else None,
+                publisher_edition_key=pub.edition_key if pub else None,
+                publisher_size_source=pub.source if pub else None,
             )
         )
         status = "MATCH" if decision.matched else "miss"
         label = f"{cand.title} — {cand.author}" if cand else "(unmatched)"
-        print(f"[{det.index}] {status}: {label}", file=sys.stderr)
+        color = appearance.color_name
+        size_note = (
+            f"{pub.thickness_mm}×{pub.height_mm}mm"
+            if pub and pub.thickness_mm and pub.height_mm
+            else (f"{pub.pages}p" if pub and pub.pages else "no pub size")
+        )
+        print(
+            f"[{det.index}] {status}: {label} | spine {color} {appearance.color_hex} | {size_note}",
+            file=sys.stderr,
+        )
 
     return results
 

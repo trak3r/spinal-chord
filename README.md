@@ -1,10 +1,10 @@
-# spinal_chord
+# spinal-chord
 
 Identify books in a photograph of a bookshelf. Fully local and free — no API keys
 or subscriptions.
 
 **Pipeline:** YOLO-World (detect) → Qwen3-VL-4B (read title/author) → Open Library
-(search) → Laya (calibrated match decision).
+(search) → Laya (calibrated match decision) → spine size/color metadata.
 
 ## Setup
 
@@ -27,12 +27,22 @@ python -m bookshelf samples/bookshelf.jpeg
 
 Output:
 
-- `<image_stem>.json` — catalog (matched titles + OCR + confidence)
+- `<image_stem>.json` — catalog (match + OCR + spine size/color)
 - `<image_stem>_crops/` — one crop per detected book (for manual ID of misses)
 
 ```bash
 python -m bookshelf photo.jpg -o catalog.csv --crops ./crops --conf 0.03
 ```
+
+### Catalog fields (size & color)
+
+| Field | Source | Notes |
+|-------|--------|-------|
+| `spine_width_px` / `spine_height_px` | photo bbox | Always present; good for sorting *this* shelf |
+| `spine_*_frac` | photo | Fraction of full image (cross-book compare in one shot) |
+| `spine_color_hex` / `spine_color_name` | photo crop | Publishers almost never publish spine color |
+| `publisher_height_mm` / `width_mm` / `thickness_mm` | Open Library edition | Sparse — often missing |
+| `publisher_pages` | Open Library | Common; rough thickness proxy |
 
 ### Flags
 
@@ -51,3 +61,4 @@ python -m bookshelf photo.jpg -o catalog.csv --crops ./crops --conf 0.03
 - Spine OCR is hard; expect many unmatched crops for manual review.
 - Laya verifies Open Library candidates — it does not invent titles.
 - Open Library needs network access; everything else runs offline after model download.
+- Free catalogs do not include publisher spine colors; use photo `spine_color_*` for rainbow sorts.
