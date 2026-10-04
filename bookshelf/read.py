@@ -78,11 +78,15 @@ def _image_data_url(image: Image.Image, max_side: int = 1280) -> str:
     return f"data:image/jpeg;base64,{b64}"
 
 
-class OpenRouterRateLimitError(RuntimeError):
-    """Raised only after exhausting rate-limit retries."""
+class OpenRouterRetryError(RuntimeError):
+    """Raised after exhausting retries on rate limits or transient network errors."""
 
 
-def _rate_limit_wait(attempt: int, retry_after: str | None = None) -> float:
+# Back-compat alias
+OpenRouterRateLimitError = OpenRouterRetryError
+
+
+def _retry_wait(attempt: int, retry_after: str | None = None) -> float:
     """Seconds to sleep before the next try (caps at 60s)."""
     if retry_after:
         try:
@@ -105,6 +109,10 @@ def _is_rate_limited(resp: requests.Response, data: dict | None = None) -> bool:
         return True
     blob = str(err).lower()
     return "rate" in blob or "429" in blob
+
+
+def _is_retryable_status(status: int) -> bool:
+    return status in {408, 425, 429, 500, 502, 503, 504}
 
 
 def _read_openrouter(
@@ -149,9 +157,22 @@ def _read_openrouter(
 
     last_err = ""
     for attempt in range(retries):
-        resp = requests.post(
-            OPENROUTER_URL, headers=headers, json=payload, timeout=timeout
-        )
+        try:
+            resp = requests.post(
+                OPENROUTER_URL, headers=headers, json=payload, timeout=timeout
+            )
+        except requests.RequestException as e:
+            # SSLError, ConnectionError, Timeout, etc.
+            last_err = f"{type(e).__name__}: {e}"[:300]
+            wait = _retry_wait(attempt)
+            print(
+                f"OpenRouter network error ({type(e).__name__}); "
+                f"sleeping {wait:.0f}s (try {attempt + 1}/{retries})…",
+                file=sys.stderr,
+            )
+            time.sleep(wait)
+            continue
+
         data: dict | None
         try:
             data = resp.json() if resp.content else None
@@ -160,9 +181,20 @@ def _read_openrouter(
 
         if _is_rate_limited(resp, data if isinstance(data, dict) else None):
             last_err = (resp.text or str(data) or "rate limited")[:300]
-            wait = _rate_limit_wait(attempt, resp.headers.get("Retry-After"))
+            wait = _retry_wait(attempt, resp.headers.get("Retry-After"))
             print(
                 f"OpenRouter rate-limited; sleeping {wait:.0f}s "
+                f"(try {attempt + 1}/{retries})…",
+                file=sys.stderr,
+            )
+            time.sleep(wait)
+            continue
+
+        if _is_retryable_status(resp.status_code):
+            last_err = (resp.text or f"HTTP {resp.status_code}")[:300]
+            wait = _retry_wait(attempt, resp.headers.get("Retry-After"))
+            print(
+                f"OpenRouter HTTP {resp.status_code}; sleeping {wait:.0f}s "
                 f"(try {attempt + 1}/{retries})…",
                 file=sys.stderr,
             )
@@ -192,8 +224,8 @@ def _read_openrouter(
             title=title, author=author, raw=str(raw), backend="openrouter"
         )
 
-    raise OpenRouterRateLimitError(
-        f"OpenRouter still rate-limited after {retries} tries. "
+    raise OpenRouterRetryError(
+        f"OpenRouter still failing after {retries} tries. "
         f"Wait a bit and re-run, or use --reader local. Last error: {last_err}"
     )
 

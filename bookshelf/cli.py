@@ -17,7 +17,7 @@ from bookshelf.detect import detect_books, save_crops
 from bookshelf.lookup import fetch_publisher_size, search_books
 from bookshelf.read import (
     OPENROUTER_MODEL,
-    OpenRouterRateLimitError,
+    OpenRouterRetryError,
     read_book,
     reader_backend,
 )
@@ -260,7 +260,7 @@ def main(argv: list[str] | None = None) -> int:
             reader=args.reader,
             vlm_model=args.vlm_model,
         )
-    except OpenRouterRateLimitError as e:
+    except OpenRouterRetryError as e:
         print(f"error: {e}", file=sys.stderr)
         return 2
 
