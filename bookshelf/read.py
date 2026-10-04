@@ -79,7 +79,11 @@ def _image_data_url(image: Image.Image, max_side: int = 1280) -> str:
 
 
 class OpenRouterRetryError(RuntimeError):
-    """Raised after exhausting retries on rate limits or transient network errors."""
+    """Raised after exhausting retries on transient rate limits or network errors."""
+
+
+class OpenRouterQuotaError(RuntimeError):
+    """Account/daily quota or credits exhausted — do not retry."""
 
 
 # Back-compat alias
@@ -97,22 +101,73 @@ def _retry_wait(attempt: int, retry_after: str | None = None) -> float:
     return min(60.0, 5.0 * (2 ** attempt))
 
 
-def _is_rate_limited(resp: requests.Response, data: dict | None = None) -> bool:
-    if resp.status_code == 429:
-        return True
+def _error_blob(data: dict | None) -> tuple[dict, str, dict]:
+    """Return (error_dict, message_lower, metadata)."""
     if not data or not isinstance(data, dict):
-        return False
+        return {}, "", {}
     err = data.get("error")
     if not isinstance(err, dict):
+        return {}, str(err or "").lower(), {}
+    meta = err.get("metadata") if isinstance(err.get("metadata"), dict) else {}
+    return err, str(err.get("message") or "").lower(), meta
+
+
+def _quota_exhausted_reason(
+    resp: requests.Response, data: dict | None
+) -> str | None:
+    """
+    Hard stop: daily free-model quota, or insufficient credits.
+
+    Upstream provider overload / shared free pool → None (retryable).
+    """
+    if resp.status_code == 402:
+        err, msg, _ = _error_blob(data)
+        return msg or "insufficient credits (HTTP 402)"
+
+    err, msg, meta = _error_blob(data)
+    if resp.status_code != 429 and err.get("code") != 429:
+        return None
+
+    limit_source = str(meta.get("limit_source") or "").lower()
+    # OpenRouter account/platform daily free-model cap.
+    if (
+        "free-models-per-day" in msg
+        or "free-models-per-day" in limit_source
+        or "per-day" in limit_source
+        or "daily" in limit_source
+        or ("per day" in msg and "rate limit" in msg)
+    ):
+        return err.get("message") or "daily free-model quota exceeded"
+
+    # Credits / spend caps sometimes surface as 429 with these sources.
+    if "credit" in limit_source or "spend" in limit_source:
+        return err.get("message") or "OpenRouter credit/spend limit exceeded"
+
+    return None
+
+
+def _is_transient_rate_limit(resp: requests.Response, data: dict | None) -> bool:
+    """Provider overload / per-minute soft limits — worth sleeping and retrying."""
+    if _quota_exhausted_reason(resp, data):
         return False
+    if resp.status_code == 429:
+        return True
+    err, msg, meta = _error_blob(data)
     if err.get("code") == 429:
         return True
-    blob = str(err).lower()
-    return "rate" in blob or "429" in blob
+    limit_source = str(meta.get("limit_source") or "").lower()
+    if "upstream" in limit_source or "shared_pool" in limit_source:
+        return True
+    if "per-min" in limit_source or "per_minute" in limit_source:
+        return True
+    if "rate" in msg or "temporarily rate-limited" in msg:
+        return True
+    return False
 
 
 def _is_retryable_status(status: int) -> bool:
-    return status in {408, 425, 429, 500, 502, 503, 504}
+    # 429 handled separately (quota vs transient).
+    return status in {408, 425, 500, 502, 503, 504}
 
 
 def _read_openrouter(
@@ -179,11 +234,20 @@ def _read_openrouter(
         except ValueError:
             data = None
 
-        if _is_rate_limited(resp, data if isinstance(data, dict) else None):
+        data_dict = data if isinstance(data, dict) else None
+        quota = _quota_exhausted_reason(resp, data_dict)
+        if quota:
+            raise OpenRouterQuotaError(
+                f"OpenRouter quota/credits exhausted — not retrying. {quota}"
+            )
+
+        if _is_transient_rate_limit(resp, data_dict):
             last_err = (resp.text or str(data) or "rate limited")[:300]
             wait = _retry_wait(attempt, resp.headers.get("Retry-After"))
+            _, msg, meta = _error_blob(data_dict)
+            src = meta.get("limit_source") or meta.get("provider_name") or "provider"
             print(
-                f"OpenRouter rate-limited; sleeping {wait:.0f}s "
+                f"OpenRouter busy ({src}); sleeping {wait:.0f}s "
                 f"(try {attempt + 1}/{retries})…",
                 file=sys.stderr,
             )

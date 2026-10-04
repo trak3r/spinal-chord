@@ -17,6 +17,7 @@ from bookshelf.detect import DEFAULT_CONF, detect_books, save_crops
 from bookshelf.lookup import fetch_publisher_size, search_books
 from bookshelf.read import (
     OPENROUTER_MODEL,
+    OpenRouterQuotaError,
     OpenRouterRetryError,
     read_book,
     reader_backend,
@@ -261,6 +262,9 @@ def main(argv: list[str] | None = None) -> int:
             reader=args.reader,
             vlm_model=args.vlm_model,
         )
+    except OpenRouterQuotaError as e:
+        print(f"error: {e}", file=sys.stderr)
+        return 3
     except OpenRouterRetryError as e:
         print(f"error: {e}", file=sys.stderr)
         return 2
