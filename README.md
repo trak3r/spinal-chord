@@ -3,8 +3,9 @@
 Identify books in a photograph of a bookshelf. Fully local and free — no API keys
 or subscriptions.
 
-**Pipeline:** YOLO-World (detect) → Qwen3-VL-4B (read title/author) → Open Library
-(search) → Laya (calibrated match decision) → spine size/color metadata.
+**Pipeline:** YOLO-World (detect) → VLM read (OpenRouter if `OPENROUTER_API_KEY` is
+set, else local Qwen3-VL-4B) → Open Library (search) → Laya (match) → spine
+size/color metadata.
 
 ## Setup
 
@@ -14,10 +15,14 @@ source .venv/bin/activate
 pip install -r requirements.txt
 ```
 
-First run downloads YOLO-World, Qwen3-VL-4B, and Laya weights (~several GB).
-YOLO-World may also auto-install the Ultralytics CLIP dependency on first detection.
+First run downloads YOLO-World and Laya weights. Local VLM weights are only needed
+if you use `--reader local` (or omit `OPENROUTER_API_KEY`).
 
-Apple Silicon uses MPS for the VLM when available.
+For faster spine reading, set a free OpenRouter key (uses `qwen/qwen3.8-27b:free`):
+
+```bash
+export OPENROUTER_API_KEY=sk-or-...
+```
 
 ## Usage
 
@@ -50,15 +55,17 @@ python -m bookshelf photo.jpg -o catalog.csv --crops ./crops --conf 0.03
 |------|---------|---------|
 | `-o` / `--output` | `<stem>.json` | JSON or CSV (by extension) |
 | `--crops` | `<stem>_crops/` | Crop output directory |
-| `--conf` | `0.02` | YOLO detection threshold (raise to reduce false positives) |
+| `--conf` | `0.5` | YOLO detection threshold (lower finds more, more false positives) |
 | `--noul-threshold` | `0.55` | Min Laya yes/no probability to accept a match |
 | `--match-confidence` | `0.35` | Min Laya choice confidence to accept a match |
 | `--max-books` | all | Only process top-N detections (useful for smoke tests) |
+| `--reader` | `auto` | `openrouter` / `local` / `auto` (key → OpenRouter) |
+| `--vlm-model` | free Qwen on OR | Override OpenRouter or local model id |
 
 ## Notes
 
-- YOLO-World scores for `"book"` prompts are often low (0.01–0.10); `0.02` is intentional.
-- Spine OCR is hard; expect many unmatched crops for manual review.
+- Default `--conf 0.5` targets roughly real book counts; lower if books are missed.
+- Spine OCR is hard; expect some unmatched crops for manual review.
 - Laya verifies Open Library candidates — it does not invent titles.
-- Open Library needs network access; everything else runs offline after model download.
+- OpenRouter free models are rate-limited; use `--reader local` to stay offline.
 - Free catalogs do not include publisher spine colors; use photo `spine_color_*` for rainbow sorts.

@@ -15,7 +15,7 @@ from bookshelf.appearance import analyze_appearance
 from bookshelf.decide import verify_match
 from bookshelf.detect import detect_books, save_crops
 from bookshelf.lookup import fetch_publisher_size, search_books
-from bookshelf.read import read_book
+from bookshelf.read import OPENROUTER_MODEL, read_book, reader_backend
 
 
 @dataclass
@@ -59,12 +59,17 @@ def identify_image(
     image_path: Path,
     *,
     crops_dir: Path,
-    conf: float = 0.02,
+    conf: float = 0.5,
     noul_threshold: float = 0.55,
     conf_threshold: float = 0.35,
     max_books: int | None = None,
+    reader: str = "auto",
+    vlm_model: str | None = None,
 ) -> list[BookResult]:
     image = Image.open(image_path).convert("RGB")
+    backend = reader_backend(reader)
+    print(f"Reader: {backend}" + (f" ({vlm_model})" if vlm_model else ""), file=sys.stderr)
+
     detections = detect_books(image, conf=conf)
     detections = sorted(detections, key=lambda d: d.confidence, reverse=True)
     if max_books is not None:
@@ -81,9 +86,9 @@ def identify_image(
         )
 
         print(f"[{det.index}] reading crop…", file=sys.stderr)
-        reading = read_book(det.crop)
+        reading = read_book(det.crop, reader=reader, model=vlm_model)
         print(
-            f"[{det.index}] OCR: {reading.title!r} / {reading.author!r}",
+            f"[{det.index}] OCR ({reading.backend}): {reading.title!r} / {reading.author!r}",
             file=sys.stderr,
         )
 
@@ -169,7 +174,7 @@ def write_csv(results: list[BookResult], path: Path) -> None:
 
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(
-        description="Identify books in a bookshelf photograph (local, free tools)."
+        description="Identify books in a bookshelf photograph."
     )
     parser.add_argument("image", type=Path, help="Path to bookshelf photo")
     parser.add_argument(
@@ -188,8 +193,8 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument(
         "--conf",
         type=float,
-        default=0.02,
-        help="YOLO-World detection confidence threshold (default: 0.02)",
+        default=0.5,
+        help="YOLO-World detection confidence threshold (default: 0.5)",
     )
     parser.add_argument(
         "--noul-threshold",
@@ -208,6 +213,23 @@ def main(argv: list[str] | None = None) -> int:
         type=int,
         default=None,
         help="Process only the top-N detections by confidence (default: all)",
+    )
+    parser.add_argument(
+        "--reader",
+        choices=("auto", "openrouter", "local"),
+        default="auto",
+        help=(
+            "Spine reader: openrouter if OPENROUTER_API_KEY is set, else local "
+            "(default: auto)"
+        ),
+    )
+    parser.add_argument(
+        "--vlm-model",
+        default=None,
+        help=(
+            f"VLM model id (OpenRouter default: {OPENROUTER_MODEL}; "
+            "local default: Qwen/Qwen3-VL-4B-Instruct)"
+        ),
     )
     args = parser.parse_args(argv)
 
@@ -229,6 +251,8 @@ def main(argv: list[str] | None = None) -> int:
         noul_threshold=args.noul_threshold,
         conf_threshold=args.match_confidence,
         max_books=args.max_books,
+        reader=args.reader,
+        vlm_model=args.vlm_model,
     )
 
     if out_path.suffix.lower() == ".csv":
