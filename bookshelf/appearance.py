@@ -2,9 +2,10 @@
 
 from __future__ import annotations
 
+from collections import Counter
 from dataclasses import dataclass
 
-from PIL import Image, ImageStat
+from PIL import Image
 
 
 @dataclass
@@ -41,26 +42,31 @@ def _coarse_color_name(r: int, g: int, b: int) -> str:
         return "black"
     if mn > 220:
         return "white"
-    if mx - mn < 25:
-        return "gray" if mx < 180 else "white"
     # Simple HSV-ish hue from RGB
     rn, gn, bn = r / 255.0, g / 255.0, b / 255.0
     mx_f, mn_f = max(rn, gn, bn), min(rn, gn, bn)
-    d = mx_f - mn_f or 1.0
-    if mx_f == rn:
-        h = ((gn - bn) / d) % 6
-    elif mx_f == gn:
-        h = (bn - rn) / d + 2
-    else:
-        h = (rn - gn) / d + 4
-    hue = h * 60
-    sat = d / mx_f if mx_f else 0
+    delta = mx_f - mn_f
     val = mx_f
-    if val < 0.25:
+    if delta == 0:
+        hue, sat = 0.0, 0.0
+    else:
+        if mx_f == rn:
+            h = ((gn - bn) / delta) % 6
+        elif mx_f == gn:
+            h = (bn - rn) / delta + 2
+        else:
+            h = (rn - gn) / delta + 4
+        hue = h * 60
+        sat = delta / mx_f
+    if val < 0.22:
         return "black"
-    if sat < 0.15:
-        return "gray" if val < 0.85 else "white"
-    # Dark warm neutrals → brown; cool darks keep their hue family.
+    # Low-saturation: ivory / chrome / gray — not warm "orange" from lighting.
+    if sat < 0.22:
+        if val >= 0.75:
+            return "white"
+        if val >= 0.23:
+            return "gray"  # includes silver / chrome
+        return "black"
     if val < 0.45 and sat < 0.45 and 15 <= hue < 70:
         return "brown"
     if hue < 20 or hue >= 340:
@@ -78,23 +84,69 @@ def _coarse_color_name(r: int, g: int, b: int) -> str:
     return "red"
 
 
+def _quantize(r: int, g: int, b: int, step: int = 24) -> tuple[int, int, int]:
+    """Bucket RGB so stripes/noise don't fragment the mode."""
+    return (
+        min(255, (r // step) * step + step // 2),
+        min(255, (g // step) * step + step // 2),
+        min(255, (b // step) * step + step // 2),
+    )
+
+
 def _dominant_color(crop: Image.Image) -> tuple[int, int, int]:
-    """Median RGB of a center band (avoids shelf background at edges)."""
+    """
+    Most common spine-field color (area mode), not a center-band blend.
+
+    Center medians latch onto mid-spine stripes (Refactoring's brick band) or
+    lettering on chrome (Showstopper). Mode over the whole crop, ignoring dark
+    text when the spine itself is light, matches how you'd name the spine.
+    """
     img = crop.convert("RGB")
+    # Bound work; keep aspect so thin spines stay thin.
     w, h = img.size
-    # Sample the middle 50% — for oriented spines this is the face of the spine.
-    left, right = int(w * 0.25), int(w * 0.75)
-    top, bottom = int(h * 0.2), int(h * 0.8)
-    if right <= left or bottom <= top:
-        band = img
+    scale = min(1.0, 160 / max(w, 1), 64 / max(h, 1))
+    if scale < 1.0:
+        img = img.resize(
+            (max(1, int(w * scale)), max(1, int(h * scale))),
+            Image.Resampling.BILINEAR,
+        )
+
+    pixels = list(img.getdata())
+    if not pixels:
+        return 128, 128, 128
+
+    dark = [p for p in pixels if max(p) < 50]
+    dark_frac = len(dark) / len(pixels)
+
+    if dark_frac >= 0.55:
+        # Mostly black/navy spine — keep dark pixels.
+        pool = dark if dark else pixels
     else:
-        band = img.crop((left, top, right, bottom))
-    # Downscale for speed
-    band = band.resize((max(1, band.width // 4), max(1, band.height // 4)))
-    stat = ImageStat.Stat(band)
-    # median is more robust than mean for text on colored spines
-    med = stat.median
-    return int(med[0]), int(med[1]), int(med[2])
+        # Light/colored spine — drop ink and deep shadows so stripes/text
+        # don't outvote the field color.
+        pool = [p for p in pixels if max(p) >= 50]
+        if len(pool) < max(20, len(pixels) // 20):
+            pool = pixels
+
+    counts: Counter[tuple[int, int, int]] = Counter(
+        _quantize(r, g, b) for r, g, b in pool
+    )
+    ranked = counts.most_common(12)
+    if not ranked:
+        return 128, 128, 128
+
+    # When several colors cover similar area (chrome reflections, dual-tone
+    # spines), prefer the lowest-saturation candidate — closer to how you'd
+    # name a silver/ivory field than a lettering stripe.
+    best_n = ranked[0][1]
+    competitive = [c for c, n in ranked if n >= best_n * 0.55]
+
+    def _sat(c: tuple[int, int, int]) -> float:
+        mx, mn = max(c), min(c)
+        return 0.0 if mx == 0 else (mx - mn) / mx
+
+    competitive.sort(key=lambda c: (_sat(c), -counts[c]))
+    return competitive[0]
 
 
 def analyze_appearance(
