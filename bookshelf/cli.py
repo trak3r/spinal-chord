@@ -269,9 +269,15 @@ def main(argv: list[str] | None = None) -> int:
     else:
         write_json(results, out_path)
 
+    detected = len(results)
+    ocr_ok = sum(1 for r in results if r.ocr_title or r.ocr_author)
     matched = sum(1 for r in results if r.matched)
+    unmatched = detected - matched
     print(
-        f"Done: {matched}/{len(results)} matched → {out_path} (crops: {crops_dir})",
+        f"Done: detected {detected}; OCR'd {ocr_ok}; "
+        f"catalog-matched {matched}; unmatched {unmatched} "
+        f"(detected but no accepted Open Library hit) "
+        f"→ {out_path} (crops: {crops_dir})",
         file=sys.stderr,
     )
     return 0
