@@ -15,7 +15,12 @@ from bookshelf.appearance import analyze_appearance
 from bookshelf.decide import verify_match
 from bookshelf.detect import detect_books, save_crops
 from bookshelf.lookup import fetch_publisher_size, search_books
-from bookshelf.read import OPENROUTER_MODEL, read_book, reader_backend
+from bookshelf.read import (
+    OPENROUTER_MODEL,
+    OpenRouterRateLimitError,
+    read_book,
+    reader_backend,
+)
 
 
 @dataclass
@@ -244,16 +249,20 @@ def main(argv: list[str] | None = None) -> int:
         args.crops or image_path.parent / f"{stem}_crops"
     ).expanduser().resolve()
 
-    results = identify_image(
-        image_path,
-        crops_dir=crops_dir,
-        conf=args.conf,
-        noul_threshold=args.noul_threshold,
-        conf_threshold=args.match_confidence,
-        max_books=args.max_books,
-        reader=args.reader,
-        vlm_model=args.vlm_model,
-    )
+    try:
+        results = identify_image(
+            image_path,
+            crops_dir=crops_dir,
+            conf=args.conf,
+            noul_threshold=args.noul_threshold,
+            conf_threshold=args.match_confidence,
+            max_books=args.max_books,
+            reader=args.reader,
+            vlm_model=args.vlm_model,
+        )
+    except OpenRouterRateLimitError as e:
+        print(f"error: {e}", file=sys.stderr)
+        return 2
 
     if out_path.suffix.lower() == ".csv":
         write_csv(results, out_path)

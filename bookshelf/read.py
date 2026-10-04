@@ -78,13 +78,43 @@ def _image_data_url(image: Image.Image, max_side: int = 1280) -> str:
     return f"data:image/jpeg;base64,{b64}"
 
 
+class OpenRouterRateLimitError(RuntimeError):
+    """Raised only after exhausting rate-limit retries."""
+
+
+def _rate_limit_wait(attempt: int, retry_after: str | None = None) -> float:
+    """Seconds to sleep before the next try (caps at 60s)."""
+    if retry_after:
+        try:
+            return min(60.0, max(1.0, float(retry_after)))
+        except ValueError:
+            pass
+    # 5, 10, 20, 40, 60, 60, …
+    return min(60.0, 5.0 * (2 ** attempt))
+
+
+def _is_rate_limited(resp: requests.Response, data: dict | None = None) -> bool:
+    if resp.status_code == 429:
+        return True
+    if not data or not isinstance(data, dict):
+        return False
+    err = data.get("error")
+    if not isinstance(err, dict):
+        return False
+    if err.get("code") == 429:
+        return True
+    blob = str(err).lower()
+    return "rate" in blob or "429" in blob
+
+
 def _read_openrouter(
     image: Image.Image,
     *,
     model: str = OPENROUTER_MODEL,
     timeout: float = 90.0,
-    retries: int = 4,
+    retries: int = 12,
 ) -> Reading:
+    import sys
     import time
 
     key = os.environ.get("OPENROUTER_API_KEY")
@@ -122,23 +152,32 @@ def _read_openrouter(
         resp = requests.post(
             OPENROUTER_URL, headers=headers, json=payload, timeout=timeout
         )
-        if resp.status_code == 429:
-            last_err = resp.text[:400]
-            time.sleep(2 ** attempt)
+        data: dict | None
+        try:
+            data = resp.json() if resp.content else None
+        except ValueError:
+            data = None
+
+        if _is_rate_limited(resp, data if isinstance(data, dict) else None):
+            last_err = (resp.text or str(data) or "rate limited")[:300]
+            wait = _rate_limit_wait(attempt, resp.headers.get("Retry-After"))
+            print(
+                f"OpenRouter rate-limited; sleeping {wait:.0f}s "
+                f"(try {attempt + 1}/{retries})…",
+                file=sys.stderr,
+            )
+            time.sleep(wait)
             continue
+
         if not resp.ok:
             raise RuntimeError(
                 f"OpenRouter error {resp.status_code}: {resp.text[:400]}"
             )
-        data = resp.json()
-        if isinstance(data, dict) and data.get("error"):
-            err = data["error"]
-            code = err.get("code") if isinstance(err, dict) else None
-            if code == 429 or (isinstance(err, dict) and "rate" in str(err).lower()):
-                last_err = str(err)[:400]
-                time.sleep(2 ** attempt)
-                continue
-            raise RuntimeError(f"OpenRouter error: {err}")
+        if not isinstance(data, dict):
+            raise RuntimeError(f"Unexpected OpenRouter response: {resp.text[:400]}")
+        if data.get("error"):
+            raise RuntimeError(f"OpenRouter error: {data['error']}")
+
         try:
             raw = data["choices"][0]["message"]["content"] or ""
         except (KeyError, IndexError, TypeError) as e:
@@ -153,8 +192,9 @@ def _read_openrouter(
             title=title, author=author, raw=str(raw), backend="openrouter"
         )
 
-    raise RuntimeError(
-        f"OpenRouter rate-limited after {retries} tries: {last_err}"
+    raise OpenRouterRateLimitError(
+        f"OpenRouter still rate-limited after {retries} tries. "
+        f"Wait a bit and re-run, or use --reader local. Last error: {last_err}"
     )
 
 
