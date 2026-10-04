@@ -39,8 +39,20 @@ def _luminance(r: int, g: int, b: int) -> float:
     return (0.2126 * r + 0.7152 * g + 0.0722 * b) / 255.0
 
 
+MAX_COLS = 79
+_SIDE_PAD = 2  # spaces on each side of the title
+
+
 def _title(book: dict) -> str:
     return (book.get("title") or book.get("ocr_title") or "(untitled)").strip()
+
+
+def _truncate(text: str, width: int) -> str:
+    if len(text) <= width:
+        return text
+    if width <= 1:
+        return text[:width]
+    return text[: width - 1] + "…"
 
 
 def _sort_key(book: dict) -> tuple:
@@ -56,8 +68,10 @@ def _sort_key(book: dict) -> tuple:
 
 def _paint_line(text: str, r: int, g: int, b: int) -> str:
     fg = (0, 0, 0) if _luminance(r, g, b) > 0.55 else (255, 255, 255)
-    # Pad so the background reads as a full-width color chip
-    padded = f"  {text}  "
+    title_width = max(1, MAX_COLS - 2 * _SIDE_PAD)
+    text = _truncate(text, title_width)
+    pad = " " * _SIDE_PAD
+    padded = f"{pad}{text}{pad}"
     return (
         f"\033[48;2;{r};{g};{b}m\033[38;2;{fg[0]};{fg[1]};{fg[2]}m"
         f"{padded}\033[0m"
