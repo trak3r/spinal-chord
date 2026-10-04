@@ -39,6 +39,15 @@ Output:
 python -m bookshelf photo.jpg -o catalog.csv --crops ./crops --conf 0.03
 ```
 
+### Rainbow shelf order
+
+Print titles sorted by spine hue (red→violet, then neutrals), each line
+background-colored to match:
+
+```bash
+python -m bookshelf.rainbow samples/bookshelf.json
+```
+
 ### Catalog fields (size & color)
 
 | Field | Source | Notes |
