@@ -64,7 +64,7 @@ python -m bookshelf.rainbow samples/bookshelf.json
 |------|---------|---------|
 | `-o` / `--output` | `<stem>.json` | JSON or CSV (by extension) |
 | `--crops` | `<stem>_crops/` | Crop output directory |
-| `--conf` | `0.5` | YOLO detection threshold (lower finds more, more false positives) |
+| `--conf` | `0.2` | YOLO detection threshold (lower finds more thin spines) |
 | `--noul-threshold` | `0.55` | Min Laya yes/no probability to accept a match |
 | `--match-confidence` | `0.35` | Min Laya choice confidence to accept a match |
 | `--max-books` | all | Only process top-N detections (useful for smoke tests) |
@@ -73,7 +73,7 @@ python -m bookshelf.rainbow samples/bookshelf.json
 
 ## Notes
 
-- Default `--conf 0.5` targets roughly real book counts; lower if books are missed.
+- Default `--conf 0.2` plus spine-shape filtering finds thin RPG spines without flooding denser false positives; raise `--conf` if noise appears.
 - Spine OCR is hard; expect some unmatched crops for manual review.
 - Laya verifies Open Library candidates — it does not invent titles.
 - OpenRouter free models are rate-limited; use `--reader local` to stay offline.

@@ -13,7 +13,7 @@ from PIL import Image
 
 from bookshelf.appearance import analyze_appearance
 from bookshelf.decide import verify_match
-from bookshelf.detect import detect_books, save_crops
+from bookshelf.detect import DEFAULT_CONF, detect_books, save_crops
 from bookshelf.lookup import fetch_publisher_size, search_books
 from bookshelf.read import (
     OPENROUTER_MODEL,
@@ -64,7 +64,7 @@ def identify_image(
     image_path: Path,
     *,
     crops_dir: Path,
-    conf: float = 0.5,
+    conf: float = DEFAULT_CONF,
     noul_threshold: float = 0.55,
     conf_threshold: float = 0.35,
     max_books: int | None = None,
@@ -76,9 +76,10 @@ def identify_image(
     print(f"Reader: {backend}" + (f" ({vlm_model})" if vlm_model else ""), file=sys.stderr)
 
     detections = detect_books(image, conf=conf)
-    detections = sorted(detections, key=lambda d: d.confidence, reverse=True)
     if max_books is not None:
+        detections = sorted(detections, key=lambda d: d.confidence, reverse=True)
         detections = detections[: max(0, max_books)]
+        detections.sort(key=lambda d: (d.bbox[0] + d.bbox[2]) / 2)
     for i, det in enumerate(detections):
         det.index = i
     crop_paths = save_crops(detections, crops_dir)
@@ -198,8 +199,8 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument(
         "--conf",
         type=float,
-        default=0.5,
-        help="YOLO-World detection confidence threshold (default: 0.5)",
+        default=DEFAULT_CONF,
+        help=f"YOLO-World detection confidence threshold (default: {DEFAULT_CONF})",
     )
     parser.add_argument(
         "--noul-threshold",
