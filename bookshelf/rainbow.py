@@ -56,14 +56,18 @@ def _truncate(text: str, width: int) -> str:
 
 
 def _sort_key(book: dict) -> tuple:
-    """Rainbow: chromatic by hue, then neutrals by dark→light."""
+    """Rainbow: chromatic by hue (then bright→dark), then neutrals dark→light."""
     r, g, b = _rgb(book)
     hue, sat, val = _hsv(r, g, b)
-    # Near-black / gray spines sit with neutrals, not mid-hue.
-    neutral = sat < 0.2 or val < 0.2
+    name = str(book.get("spine_color_name") or "").lower()
+    # Trust the named bucket: cream/ivory ("white") must not sit in the orange
+    # band just because warm lighting pushed sat a hair over 0.2.
+    neutral = name in {"white", "gray", "black"} or sat < 0.22 or val < 0.2
     if neutral:
         return (1, _luminance(r, g, b), _title(book).lower())
-    return (0, hue, _title(book).lower())
+    # Within a hue, bright→dark so mustard AD&D spines form a smooth band
+    # instead of dark brown jumping between bright oranges alphabetically.
+    return (0, hue, -val, _title(book).lower())
 
 
 def _paint_line(text: str, r: int, g: int, b: int) -> str:
