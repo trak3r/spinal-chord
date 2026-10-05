@@ -66,13 +66,13 @@
     "spine_height_px": 2124,
     "spine_width_frac": 0.061,
     "spine_height_frac": 0.7024,
-    "spine_color_hex": "#cccccc",
+    "spine_color_hex": "#9c6c54",
     "spine_color_rgb": [
-      204,
-      204,
-      204
+      156,
+      108,
+      84
     ],
-    "spine_color_name": "white",
+    "spine_color_name": "red",
     "spine_color_source": "photo",
     "publisher_height_mm": null,
     "publisher_width_mm": null,
@@ -444,13 +444,13 @@
     "spine_height_px": 1925,
     "spine_width_frac": 0.0273,
     "spine_height_frac": 0.6366,
-    "spine_color_hex": "#543c24",
+    "spine_color_hex": "#9c6c3c",
     "spine_color_rgb": [
-      84,
-      60,
-      36
+      156,
+      108,
+      60
     ],
-    "spine_color_name": "brown",
+    "spine_color_name": "orange",
     "spine_color_source": "photo",
     "publisher_height_mm": null,
     "publisher_width_mm": null,
@@ -612,13 +612,13 @@
     "spine_height_px": 1939,
     "spine_width_frac": 0.0392,
     "spine_height_frac": 0.6412,
-    "spine_color_hex": "#3c3c3c",
+    "spine_color_hex": "#6c543c",
     "spine_color_rgb": [
-      60,
-      60,
+      108,
+      84,
       60
     ],
-    "spine_color_name": "gray",
+    "spine_color_name": "brown",
     "spine_color_source": "photo",
     "publisher_height_mm": null,
     "publisher_width_mm": null,

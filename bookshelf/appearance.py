@@ -95,16 +95,22 @@ def _quantize(r: int, g: int, b: int, step: int = 24) -> tuple[int, int, int]:
 
 def _dominant_color(crop: Image.Image) -> tuple[int, int, int]:
     """
-    Most common spine-field color (area mode), not a center-band blend.
+    Spine *field* color by area, not lettering or a center stripe.
 
-    Center medians latch onto mid-spine stripes (Refactoring's brick band) or
-    lettering on chrome (Showstopper). Mode over the whole crop, ignoring dark
-    text when the spine itself is light, matches how you'd name the spine.
+    Vote by coarse color name (orange/red/gray/…) across quantized buckets,
+    then take the mode bucket inside the winning name. That keeps chrome
+    (Showstopper) gray and cream (Refactoring) white, while thick gray title
+    text on a brick spine (Monster Overhaul) cannot outvote the red field —
+    and dark ink on mustard AD&D spines cannot tip the vote to brown.
     """
     img = crop.convert("RGB")
-    # Bound work; keep aspect so thin spines stay thin.
+    # Bound work; scale by long side so tall unoriented spines aren't crushed
+    # to a 3×64 smear (old short-side cap of 64).
     w, h = img.size
-    scale = min(1.0, 160 / max(w, 1), 64 / max(h, 1))
+    long, short = max(w, h), min(w, h)
+    scale = min(1.0, 160 / max(long, 1))
+    if short > 0 and short * scale < 8:
+        scale = min(1.0, 8 / short)
     if scale < 1.0:
         img = img.resize(
             (max(1, int(w * scale)), max(1, int(h * scale))),
@@ -122,8 +128,7 @@ def _dominant_color(crop: Image.Image) -> tuple[int, int, int]:
         # Mostly black/navy spine — keep dark pixels.
         pool = dark if dark else pixels
     else:
-        # Light/colored spine — drop ink and deep shadows so stripes/text
-        # don't outvote the field color.
+        # Drop near-black ink/shadows so they don't fragment the field vote.
         pool = [p for p in pixels if max(p) >= 50]
         if len(pool) < max(20, len(pixels) // 20):
             pool = pixels
@@ -131,22 +136,18 @@ def _dominant_color(crop: Image.Image) -> tuple[int, int, int]:
     counts: Counter[tuple[int, int, int]] = Counter(
         _quantize(r, g, b) for r, g, b in pool
     )
-    ranked = counts.most_common(12)
-    if not ranked:
+    if not counts:
         return 128, 128, 128
 
-    # When several colors cover similar area (chrome reflections, dual-tone
-    # spines), prefer the lowest-saturation candidate — closer to how you'd
-    # name a silver/ivory field than a lettering stripe.
-    best_n = ranked[0][1]
-    competitive = [c for c, n in ranked if n >= best_n * 0.55]
+    by_name: Counter[str] = Counter()
+    buckets_for: dict[str, Counter[tuple[int, int, int]]] = {}
+    for color, n in counts.items():
+        name = _coarse_color_name(*color)
+        by_name[name] += n
+        buckets_for.setdefault(name, Counter())[color] += n
 
-    def _sat(c: tuple[int, int, int]) -> float:
-        mx, mn = max(c), min(c)
-        return 0.0 if mx == 0 else (mx - mn) / mx
-
-    competitive.sort(key=lambda c: (_sat(c), -counts[c]))
-    return competitive[0]
+    best_name = by_name.most_common(1)[0][0]
+    return buckets_for[best_name].most_common(1)[0][0]
 
 
 def analyze_appearance(

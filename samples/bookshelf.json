@@ -402,13 +402,13 @@
     "spine_height_px": 1427,
     "spine_width_frac": 0.0662,
     "spine_height_frac": 0.4719,
-    "spine_color_hex": "#ccccb4",
+    "spine_color_hex": "#b45454",
     "spine_color_rgb": [
-      204,
-      204,
-      180
+      180,
+      84,
+      84
     ],
-    "spine_color_name": "white",
+    "spine_color_name": "red",
     "spine_color_source": "photo",
     "publisher_height_mm": null,
     "publisher_width_mm": null,
@@ -444,13 +444,13 @@
     "spine_height_px": 1431,
     "spine_width_frac": 0.0796,
     "spine_height_frac": 0.4732,
-    "spine_color_hex": "#ccccb4",
+    "spine_color_hex": "#b4b4b4",
     "spine_color_rgb": [
-      204,
-      204,
+      180,
+      180,
       180
     ],
-    "spine_color_name": "white",
+    "spine_color_name": "gray",
     "spine_color_source": "photo",
     "publisher_height_mm": null,
     "publisher_width_mm": null,
@@ -486,11 +486,11 @@
     "spine_height_px": 1248,
     "spine_width_frac": 0.0642,
     "spine_height_frac": 0.4127,
-    "spine_color_hex": "#cccccc",
+    "spine_color_hex": "#ccccb4",
     "spine_color_rgb": [
       204,
       204,
-      204
+      180
     ],
     "spine_color_name": "white",
     "spine_color_source": "photo",
