@@ -17,7 +17,7 @@ _processor = None
 _model_id: str | None = None
 
 LOCAL_MODEL = "Qwen/Qwen3-VL-4B-Instruct"
-OPENROUTER_MODEL = "qwen/qwen3.8-27b:free"
+OPENROUTER_MODEL = "google/gemma-4-26b-a4b-it:free"
 OPENROUTER_URL = "https://openrouter.ai/api/v1/chat/completions"
 
 READ_PROMPT = (

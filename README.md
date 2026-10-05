@@ -18,12 +18,16 @@ pip install -r requirements.txt
 First run downloads YOLO-World and Laya weights. Local VLM weights are only needed
 if you use `--reader local` (or omit `OPENROUTER_API_KEY`).
 
-For faster spine reading, set a free OpenRouter key (uses `qwen/qwen3.8-27b:free`):
+For faster spine reading, set a free OpenRouter key (default:
+`google/gemma-4-26b-a4b-it:free`):
 
 ```bash
 export OPENROUTER_API_KEY=sk-or-...
 ```
 
+Other free vision options if that endpoint disappears (pass `--vlm-model`):
+`google/gemma-4-31b-it:free`, `nvidia/nemotron-3-nano-omni-30b-a3b-reasoning:free`,
+or `openrouter/free` (auto-picks a free model that supports images).
 ## Usage
 
 ```bash
