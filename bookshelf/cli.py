@@ -16,9 +16,10 @@ from bookshelf.decide import verify_match
 from bookshelf.detect import DEFAULT_CONF, detect_books, save_crops
 from bookshelf.lookup import fetch_publisher_size, search_books
 from bookshelf.read import (
+    GEMINI_MODEL,
     OPENROUTER_MODEL,
-    OpenRouterQuotaError,
-    OpenRouterRetryError,
+    ReaderQuotaError,
+    ReaderRetryError,
     read_book,
     reader_backend,
 )
@@ -223,18 +224,19 @@ def main(argv: list[str] | None = None) -> int:
     )
     parser.add_argument(
         "--reader",
-        choices=("auto", "openrouter", "local"),
+        choices=("auto", "gemini", "openrouter", "local"),
         default="auto",
         help=(
-            "Spine reader: openrouter if OPENROUTER_API_KEY is set, else local "
-            "(default: auto)"
+            "Spine reader: gemini if GEMINI_API_KEY is set, else openrouter if "
+            "OPENROUTER_API_KEY is set, else local (default: auto)"
         ),
     )
     parser.add_argument(
         "--vlm-model",
         default=None,
         help=(
-            f"VLM model id (OpenRouter default: {OPENROUTER_MODEL}; "
+            f"VLM model id (Gemini default: {GEMINI_MODEL}; "
+            f"OpenRouter default: {OPENROUTER_MODEL}; "
             "local default: Qwen/Qwen3-VL-4B-Instruct)"
         ),
     )
@@ -262,10 +264,10 @@ def main(argv: list[str] | None = None) -> int:
             reader=args.reader,
             vlm_model=args.vlm_model,
         )
-    except OpenRouterQuotaError as e:
+    except ReaderQuotaError as e:
         print(f"error: {e}", file=sys.stderr)
         return 3
-    except OpenRouterRetryError as e:
+    except ReaderRetryError as e:
         print(f"error: {e}", file=sys.stderr)
         return 2
 

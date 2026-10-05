@@ -1,4 +1,4 @@
-"""Title/author extraction from book crops (OpenRouter or local VLM)."""
+"""Title/author extraction from book crops (Gemini, OpenRouter, or local VLM)."""
 
 from __future__ import annotations
 
@@ -19,6 +19,12 @@ _model_id: str | None = None
 LOCAL_MODEL = "Qwen/Qwen3-VL-4B-Instruct"
 OPENROUTER_MODEL = "google/gemma-4-26b-a4b-it:free"
 OPENROUTER_URL = "https://openrouter.ai/api/v1/chat/completions"
+# AI Studio free tier — good for high-volume spine OCR.
+GEMINI_MODEL = "gemini-3.5-flash-lite"
+GEMINI_URL = (
+    "https://generativelanguage.googleapis.com/v1beta/models/"
+    "{model}:generateContent"
+)
 
 READ_PROMPT = (
     "This image is a single book spine or cover. "
@@ -33,21 +39,31 @@ class Reading:
     title: str
     author: str
     raw: str
-    backend: str  # "openrouter" | "local"
+    backend: str  # "gemini" | "openrouter" | "local"
 
 
 def reader_backend(prefer: str = "auto") -> str:
-    """Resolve which reader to use: openrouter | local."""
+    """Resolve which reader to use: gemini | openrouter | local."""
     if prefer == "local":
         return "local"
+    if prefer == "gemini":
+        if not os.environ.get("GEMINI_API_KEY"):
+            raise RuntimeError(
+                "GEMINI_API_KEY is not set (required for --reader gemini)"
+            )
+        return "gemini"
     if prefer == "openrouter":
         if not os.environ.get("OPENROUTER_API_KEY"):
             raise RuntimeError(
                 "OPENROUTER_API_KEY is not set (required for --reader openrouter)"
             )
         return "openrouter"
-    # auto
-    return "openrouter" if os.environ.get("OPENROUTER_API_KEY") else "local"
+    # auto: prefer Gemini free tier, then OpenRouter, else local
+    if os.environ.get("GEMINI_API_KEY"):
+        return "gemini"
+    if os.environ.get("OPENROUTER_API_KEY"):
+        return "openrouter"
+    return "local"
 
 
 def _parse_json(text: str) -> tuple[str, str]:
@@ -66,7 +82,7 @@ def _parse_json(text: str) -> tuple[str, str]:
         return "", ""
 
 
-def _image_data_url(image: Image.Image, max_side: int = 1280) -> str:
+def _jpeg_b64(image: Image.Image, max_side: int = 1280) -> str:
     img = image.convert("RGB")
     w, h = img.size
     scale = min(1.0, max_side / max(w, h))
@@ -74,20 +90,25 @@ def _image_data_url(image: Image.Image, max_side: int = 1280) -> str:
         img = img.resize((max(1, int(w * scale)), max(1, int(h * scale))))
     buf = io.BytesIO()
     img.save(buf, format="JPEG", quality=85)
-    b64 = base64.b64encode(buf.getvalue()).decode("ascii")
-    return f"data:image/jpeg;base64,{b64}"
+    return base64.b64encode(buf.getvalue()).decode("ascii")
 
 
-class OpenRouterRetryError(RuntimeError):
+def _image_data_url(image: Image.Image, max_side: int = 1280) -> str:
+    return f"data:image/jpeg;base64,{_jpeg_b64(image, max_side=max_side)}"
+
+
+class ReaderRetryError(RuntimeError):
     """Raised after exhausting retries on transient rate limits or network errors."""
 
 
-class OpenRouterQuotaError(RuntimeError):
+class ReaderQuotaError(RuntimeError):
     """Account/daily quota or credits exhausted — do not retry."""
 
 
-# Back-compat alias
-OpenRouterRateLimitError = OpenRouterRetryError
+# Back-compat aliases
+OpenRouterRetryError = ReaderRetryError
+OpenRouterQuotaError = ReaderQuotaError
+OpenRouterRateLimitError = ReaderRetryError
 
 
 def _retry_wait(attempt: int, retry_after: str | None = None) -> float:
@@ -237,7 +258,7 @@ def _read_openrouter(
         data_dict = data if isinstance(data, dict) else None
         quota = _quota_exhausted_reason(resp, data_dict)
         if quota:
-            raise OpenRouterQuotaError(
+            raise ReaderQuotaError(
                 f"OpenRouter quota/credits exhausted — not retrying. {quota}"
             )
 
@@ -288,8 +309,134 @@ def _read_openrouter(
             title=title, author=author, raw=str(raw), backend="openrouter"
         )
 
-    raise OpenRouterRetryError(
+    raise ReaderRetryError(
         f"OpenRouter still failing after {retries} tries. "
+        f"Wait a bit and re-run, or use --reader local. Last error: {last_err}"
+    )
+
+
+def _gemini_quota_reason(resp: requests.Response, data: dict | None) -> str | None:
+    """Hard stop on Gemini free-tier daily quota / billing blocks."""
+    if resp.status_code == 429:
+        err = (data or {}).get("error") if isinstance(data, dict) else None
+        msg = ""
+        if isinstance(err, dict):
+            msg = str(err.get("message") or "")
+        low = msg.lower()
+        # Per-minute limits are retryable; daily / quota exhausted are not.
+        if "per day" in low or "daily" in low or "quota" in low:
+            return msg or "Gemini quota exceeded"
+        # RESOURCE_EXHAUSTED without per-minute wording → treat as hard quota.
+        status = str(err.get("status") or "") if isinstance(err, dict) else ""
+        if status == "RESOURCE_EXHAUSTED" and "rate" not in low:
+            return msg or "Gemini RESOURCE_EXHAUSTED"
+    if resp.status_code == 403:
+        err = (data or {}).get("error") if isinstance(data, dict) else None
+        msg = str(err.get("message") or "") if isinstance(err, dict) else ""
+        if "billing" in msg.lower() or "free tier" in msg.lower():
+            return msg or "Gemini free tier unavailable"
+    return None
+
+
+def _read_gemini(
+    image: Image.Image,
+    *,
+    model: str = GEMINI_MODEL,
+    timeout: float = 90.0,
+    retries: int = 12,
+) -> Reading:
+    import sys
+    import time
+
+    key = os.environ.get("GEMINI_API_KEY")
+    if not key:
+        raise RuntimeError("GEMINI_API_KEY is not set")
+
+    url = GEMINI_URL.format(model=model)
+    payload = {
+        "contents": [
+            {
+                "parts": [
+                    {"text": READ_PROMPT},
+                    {
+                        "inline_data": {
+                            "mime_type": "image/jpeg",
+                            "data": _jpeg_b64(image),
+                        }
+                    },
+                ]
+            }
+        ],
+        "generationConfig": {
+            "temperature": 0,
+            "maxOutputTokens": 256,
+            "responseMimeType": "application/json",
+        },
+    }
+    headers = {
+        "Content-Type": "application/json",
+        "x-goog-api-key": key,
+    }
+
+    last_err = ""
+    for attempt in range(retries):
+        try:
+            resp = requests.post(url, headers=headers, json=payload, timeout=timeout)
+        except requests.RequestException as e:
+            last_err = f"{type(e).__name__}: {e}"[:300]
+            wait = _retry_wait(attempt)
+            print(
+                f"Gemini network error ({type(e).__name__}); "
+                f"sleeping {wait:.0f}s (try {attempt + 1}/{retries})…",
+                file=sys.stderr,
+            )
+            time.sleep(wait)
+            continue
+
+        data: dict | None
+        try:
+            data = resp.json() if resp.content else None
+        except ValueError:
+            data = None
+        data_dict = data if isinstance(data, dict) else None
+
+        quota = _gemini_quota_reason(resp, data_dict)
+        if quota:
+            raise ReaderQuotaError(
+                f"Gemini quota exhausted — not retrying. {quota}"
+            )
+
+        if resp.status_code == 429 or _is_retryable_status(resp.status_code):
+            last_err = (resp.text or str(data) or f"HTTP {resp.status_code}")[:300]
+            wait = _retry_wait(attempt, resp.headers.get("Retry-After"))
+            print(
+                f"Gemini busy (HTTP {resp.status_code}); sleeping {wait:.0f}s "
+                f"(try {attempt + 1}/{retries})…",
+                file=sys.stderr,
+            )
+            time.sleep(wait)
+            continue
+
+        if not resp.ok:
+            raise RuntimeError(f"Gemini error {resp.status_code}: {resp.text[:400]}")
+        if not isinstance(data, dict):
+            raise RuntimeError(f"Unexpected Gemini response: {resp.text[:400]}")
+        if data.get("error"):
+            raise RuntimeError(f"Gemini error: {data['error']}")
+
+        try:
+            parts = data["candidates"][0]["content"]["parts"]
+            raw = "".join(
+                str(p.get("text") or "") for p in parts if isinstance(p, dict)
+            )
+        except (KeyError, IndexError, TypeError) as e:
+            raise RuntimeError(f"Unexpected Gemini response: {data!r}") from e
+
+        title, author = _parse_json(raw)
+        return Reading(title=title, author=author, raw=raw, backend="gemini")
+
+    raise ReaderRetryError(
+        f"Gemini still failing after {retries} tries. "
         f"Wait a bit and re-run, or use --reader local. Last error: {last_err}"
     )
 
@@ -378,6 +525,8 @@ def read_book(
 ) -> Reading:
     """Extract title and author from a book crop."""
     backend = reader_backend(reader)
+    if backend == "gemini":
+        return _read_gemini(image, model=model or GEMINI_MODEL)
     if backend == "openrouter":
         return _read_openrouter(image, model=model or OPENROUTER_MODEL)
     return _read_local(image, model_id=model or LOCAL_MODEL)

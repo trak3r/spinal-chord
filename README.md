@@ -3,9 +3,9 @@
 Identify books in a photograph of a bookshelf. Fully local and free — no API keys
 or subscriptions.
 
-**Pipeline:** YOLO-World (detect) → VLM read (OpenRouter if `OPENROUTER_API_KEY` is
-set, else local Qwen3-VL-4B) → Open Library (search) → Laya (match) → spine
-size/color metadata.
+**Pipeline:** YOLO-World (detect) → VLM read (Gemini if `GEMINI_API_KEY` is set,
+else OpenRouter if `OPENROUTER_API_KEY`, else local Qwen3-VL-4B) → Open Library
+(search) → Laya (match) → spine size/color metadata.
 
 ## Setup
 
@@ -16,18 +16,26 @@ pip install -r requirements.txt
 ```
 
 First run downloads YOLO-World and Laya weights. Local VLM weights are only needed
-if you use `--reader local` (or omit `OPENROUTER_API_KEY`).
+if you use `--reader local` (or omit cloud API keys).
 
-For faster spine reading, set a free OpenRouter key (default:
-`google/gemma-4-26b-a4b-it:free`):
+For faster spine reading, prefer a free Google AI Studio key (default model:
+`gemini-3.5-flash-lite`):
+
+```bash
+export GEMINI_API_KEY=...
+```
+
+Or OpenRouter (default: `google/gemma-4-26b-a4b-it:free`):
 
 ```bash
 export OPENROUTER_API_KEY=sk-or-...
 ```
 
-Other free vision options if that endpoint disappears (pass `--vlm-model`):
+Other free OpenRouter vision options if that endpoint disappears (pass `--vlm-model`):
 `google/gemma-4-31b-it:free`, `nvidia/nemotron-3-nano-omni-30b-a3b-reasoning:free`,
 or `openrouter/free` (auto-picks a free model that supports images).
+
+Gemini alternatives: `gemini-2.5-flash-lite`, `gemini-2.5-flash`.
 ## Usage
 
 ```bash
@@ -72,13 +80,13 @@ python -m bookshelf.rainbow samples/bookshelf.json
 | `--noul-threshold` | `0.55` | Min Laya yes/no probability to accept a match |
 | `--match-confidence` | `0.35` | Min Laya choice confidence to accept a match |
 | `--max-books` | all | Only process top-N detections (useful for smoke tests) |
-| `--reader` | `auto` | `openrouter` / `local` / `auto` (key → OpenRouter) |
-| `--vlm-model` | free Qwen on OR | Override OpenRouter or local model id |
+| `--reader` | `auto` | `gemini` / `openrouter` / `local` / `auto` (Gemini → OpenRouter → local) |
+| `--vlm-model` | cloud default | Override Gemini, OpenRouter, or local model id |
 
 ## Notes
 
 - Default `--conf 0.2` plus spine-shape filtering finds thin RPG spines without flooding denser false positives; raise `--conf` if noise appears.
 - Spine OCR is hard; expect some unmatched crops for manual review.
 - Laya verifies Open Library candidates — it does not invent titles.
-- OpenRouter free models are rate-limited; use `--reader local` to stay offline.
+- OpenRouter / Gemini free tiers are rate-limited; use `--reader local` to stay offline.
 - Free catalogs do not include publisher spine colors; use photo `spine_color_*` for rainbow sorts.
